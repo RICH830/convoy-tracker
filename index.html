@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<title>Convoy Tracker</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --text: #15181d; --muted: #5b6370; --line: #dde1e6;
+  --accent: #1f6feb; --ok: #1a7f37; --warn: #b35900; --bad: #c62828; --shadow: 0 2px 10px rgba(0,0,0,.15);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1116; --panel: #161b22; --text: #e8ebef; --muted: #9aa4b1; --line: #2b323c;
+    --accent: #4c8dff; --ok: #3fb950; --warn: #e3a008; --bad: #ff6b6b; --shadow: 0 2px 10px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1116; --panel: #161b22; --text: #e8ebef; --muted: #9aa4b1; --line: #2b323c;
+  --accent: #4c8dff; --ok: #3fb950; --warn: #e3a008; --bad: #ff6b6b; --shadow: 0 2px 10px rgba(0,0,0,.5);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top));
+  background: var(--panel); border-bottom: 1px solid var(--line); z-index: 1000; flex-wrap: wrap; }
+header h1 { font-size: 17px; margin: 0 auto 0 0; white-space: nowrap; }
+button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  border-radius: 10px; padding: 8px 12px; min-height: 40px; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.alert-on { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 700; }
+#status { font-size: 13px; color: var(--muted); width: 100%; display: flex; gap: 10px; flex-wrap: wrap; }
+#status b { color: var(--text); font-weight: 600; }
+.pill { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
+.pill.ok { color: var(--ok); border-color: var(--ok); }
+.pill.warn { color: var(--warn); border-color: var(--warn); }
+.pill.bad { color: var(--bad); border-color: var(--bad); }
+#banner { display: none; background: var(--bad); color: #fff; font-weight: 700; padding: 10px 12px; text-align: center; z-index: 1000; }
+#map { flex: 1; min-height: 0; }
+#list { max-height: 38vh; overflow-y: auto; background: var(--panel); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom); }
+.unit { display: grid; grid-template-columns: 34px 1fr auto; gap: 2px 10px; align-items: center;
+  padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.unit .dot { grid-row: span 2; width: 30px; height: 30px; border-radius: 50%; color: #fff; font-weight: 700;
+  display: grid; place-items: center; border: 2px solid rgba(255,255,255,.85); }
+.unit .name { font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.unit .dist { font-weight: 700; font-size: 18px; text-align: right; }
+.unit .meta { color: var(--muted); font-size: 13px; }
+.unit .ago { color: var(--muted); font-size: 13px; text-align: right; }
+.unit.lost { opacity: .55; }
+.unit.alert .name { color: var(--bad); }
+.empty { padding: 14px 12px; color: var(--muted); }
+.mk { position: relative; width: 34px; height: 34px; }
+.mk .c { position: absolute; inset: 4px; border-radius: 50%; color: #fff; font-weight: 700; font-size: 13px;
+  display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.mk .arrow { position: absolute; inset: 0; }
+.mk .arrow::before { content: ""; position: absolute; left: 50%; top: -5px; transform: translateX(-50%);
+  border: 6px solid transparent; border-bottom: 9px solid #fff; filter: drop-shadow(0 0 1px #000); }
+.mk.lost .c { filter: grayscale(1); opacity: .6; }
+.mk.alert .c { box-shadow: 0 0 0 4px #c62828, 0 0 0 8px rgba(198,40,40,.4); }
+.mk .lbl { position: absolute; top: 34px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  background: rgba(0,0,0,.72); color: #fff; font-size: 12px; padding: 1px 6px; border-radius: 6px; }
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text);
+  width: min(420px, calc(100vw - 32px)); padding: 16px; }
+dialog::backdrop { background: rgba(0,0,0,.5); }
+dialog h2 { margin: 0 0 12px; font-size: 18px; }
+dialog label { display: block; margin: 10px 0 4px; font-size: 13px; color: var(--muted); }
+dialog input, dialog select { width: 100%; font: inherit; padding: 9px 10px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+dialog p.hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+#msg { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg);
+  padding: 8px 14px; border-radius: 10px; display: none; z-index: 2000; max-width: calc(100vw - 32px); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Convoy Tracker</h1>
+  <button id="btnConnect" class="primary">Connect unit</button>
+  <button id="btnView" title="Switch between following you and showing everyone">Fit all</button>
+  <button id="btnAlert" title="Tell the convoy you need to stop">Need stop</button>
+  <button id="btnSettings" aria-label="Settings">⚙</button>
+  <div id="status"><span>Not connected</span></div>
+</header>
+<div id="banner"></div>
+<div id="map"></div>
+<div id="list"><div class="empty">Connect your LoRa unit to see the convoy.</div></div>
+<div id="msg"></div>
+
+<dialog id="dlg">
+  <form method="dialog" id="cfgForm">
+    <h2>Unit settings</h2>
+    <label for="cfgName">Name (shown to everyone, max 12 characters)</label>
+    <input id="cfgName" maxlength="12" autocomplete="off">
+    <label for="cfgSlot">Slot (each car needs a different one)</label>
+    <select id="cfgSlot"></select>
+    <label for="cfgNet">Convoy group ID (same for every car, 0–255)</label>
+    <input id="cfgNet" type="number" min="0" max="255">
+    <label for="cfgPwr">Transmit power (dBm)</label>
+    <input id="cfgPwr" type="number" min="2" max="20">
+    <p class="hint">Saved on the unit itself. Changing the group ID clears the list of heard units.</p>
+    <div class="row">
+      <button type="button" id="btnDemo">Demo mode</button>
+      <button value="cancel">Cancel</button>
+      <button id="btnSave" class="primary" value="save">Save to unit</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+"use strict";
+const SVC   = "7e0c0000-2b6a-4d31-9c8e-5a7b3c1d0000";
+const POS   = "7e0c0001-2b6a-4d31-9c8e-5a7b3c1d0000";
+const NODES = "7e0c0002-2b6a-4d31-9c8e-5a7b3c1d0000";
+const CFG   = "7e0c0003-2b6a-4d31-9c8e-5a7b3c1d0000";
+const COLORS = ["#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00897b", "#6d4c41", "#d81b60"];
+const LOST_S = 15, PREDICT_MAX_S = 2, TRAIL_S = 120;
+
+const $ = (id) => document.getElementById(id);
+const units = new Map();      // slot -> unit
+let status = null;            // last status record from the unit
+let me = null;                // { lat, lon, speed, heading, acc, t }
+let follow = true, alertOn = false, demo = null;
+let dev = null, posChr = null, cfgChr = null, connecting = false;
+let phoneBatt = 255, lastSent = 0, wakeLock = null;
+
+// ---------------------------------------------------------------- map
+
+const map = L.map("map", { zoomControl: false, attributionControl: true }).setView([54.5, -2.5], 6);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: "© OpenStreetMap contributors"
+}).addTo(map);
+L.control.zoom({ position: "bottomright" }).addTo(map);
+map.on("dragstart", () => { if (follow) setFollow(false); });
+// The list below the map changes height as cars appear; keep Leaflet's size in step.
+new ResizeObserver(() => map.invalidateSize()).observe($("map"));
+
+function markerHtml(u, label) {
+  const cls = ["mk", u.lost ? "lost" : "", u.alert ? "alert" : ""].join(" ");
+  const arrow = u.moving ? `<div class="arrow" style="transform:rotate(${u.heading}deg)"></div>` : "";
+  return `<div class="${cls}">${arrow}<div class="c" style="background:${u.color}">${u.text}</div>` +
+         `<div class="lbl">${esc(label)}</div></div>`;
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+// ---------------------------------------------------------------- geo helpers
+
+function distM(a, b) {
+  const k = Math.PI / 180, R = 6371000;
+  const dLat = (b.lat - a.lat) * k, dLon = (b.lon - a.lon) * k;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * k) * Math.cos(b.lat * k) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function bearing(a, b) {
+  const k = Math.PI / 180;
+  const y = Math.sin((b.lon - a.lon) * k) * Math.cos(b.lat * k);
+  const x = Math.cos(a.lat * k) * Math.sin(b.lat * k) - Math.sin(a.lat * k) * Math.cos(b.lat * k) * Math.cos((b.lon - a.lon) * k);
+  return (Math.atan2(y, x) / k + 360) % 360;
+}
+function move(p, headingDeg, metres) {
+  const k = Math.PI / 180, R = 6371000;
+  return { lat: p.lat + (metres * Math.cos(headingDeg * k)) / R / k,
+           lon: p.lon + (metres * Math.sin(headingDeg * k)) / (R * Math.cos(p.lat * k)) / k };
+}
+function fmtDist(m) {
+  const mi = m / 1609.34;
+  if (mi < 0.1) return Math.round(m * 1.0936) + " yd";
+  return (mi < 10 ? mi.toFixed(1) : Math.round(mi)) + " mi";
+}
+function fmtAgo(s) {
+  if (s < 2) return "now";
+  if (s < 60) return Math.round(s) + "s ago";
+  return Math.floor(s / 60) + "m " + Math.round(s % 60) + "s ago";
+}
+function clockDir(b, myHeading) {
+  const h = Math.round(((b - myHeading + 360) % 360) / 30) % 12;
+  return (h === 0 ? 12 : h) + " o'clock";
+}
+
+// ---------------------------------------------------------------- records from the unit
+
+function getUnit(slot) {
+  let u = units.get(slot);
+  if (!u) {
+    u = { slot, name: "Car " + (slot + 1), color: COLORS[slot], text: String(slot + 1), trail: [],
+          marker: null, line: null, fix: false };
+    units.set(slot, u);
+  }
+  return u;
+}
+
+function onRecord(dv) {
+  const type = dv.getUint8(0), now = performance.now() / 1000;
+  if (type === 1 && dv.byteLength >= 20) {
+    const b1 = dv.getUint8(1), slot = b1 & 7, u = getUnit(slot);
+    u.fix   = !!(b1 & 0x08);
+    u.alert = !!(b1 & 0x10);
+    u.gps   = !!(b1 & 0x20);
+    u.relayed = !!(b1 & 0x40);
+    if (u.fix) {
+      u.lat = dv.getInt32(2, true) / 1e7;
+      u.lon = dv.getInt32(6, true) / 1e7;
+    }
+    u.speed = dv.getUint16(10, true) / 100;
+    u.heading = dv.getUint8(12) * 360 / 256;
+    u.batt = dv.getUint8(13);
+    u.phoneBatt = dv.getUint8(14);
+    u.rssi = dv.getInt8(15);
+    u.snr = dv.getInt8(16);
+    u.heardAt = now - dv.getUint8(17) / 10;
+    const fa = dv.getUint8(18);
+    u.fixAt = fa === 255 ? null : now - fa / 10;
+    u.via = dv.getUint8(19);
+    if (u.fix && u.fixAt !== null) {
+      const last = u.trail[u.trail.length - 1];
+      if (!last || last.lat !== u.lat || last.lon !== u.lon) u.trail.push({ lat: u.lat, lon: u.lon, t: now });
+    }
+  } else if (type === 2 && dv.byteLength >= 3) {
+    const slot = dv.getUint8(1) & 7;
+    let name = "";
+    for (let i = 2; i < Math.min(dv.byteLength, 14); i++) {
+      const c = dv.getUint8(i);
+      if (!c) break;
+      name += String.fromCharCode(c);
+    }
+    if (name) getUnit(slot).name = name;
+  } else if (type === 3 && dv.byteLength >= 10) {
+    const f = dv.getUint8(3);
+    status = { slot: dv.getUint8(1), net: dv.getUint8(2), synced: !!(f & 1), conflict: !!(f & 2),
+               alert: !!(f & 4), radioOk: !!(f & 8), gps: !!(f & 16), batt: dv.getUint8(4),
+               ref: dv.getUint8(5), pwr: dv.getInt8(6), heard: dv.getUint8(7), tx: dv.getUint16(8, true) };
+    if (status.alert !== alertOn) { alertOn = status.alert; renderAlertBtn(); }
+  }
+}
+
+// ---------------------------------------------------------------- render
+
+function selfSlot() { return status ? status.slot : -1; }
+
+function render() {
+  const now = performance.now() / 1000;
+  const mySlot = selfSlot();
+  const others = [];
+  const alerts = [];
+
+  for (const u of units.values()) {
+    if (u.slot === mySlot) { if (u.marker) { u.marker.remove(); u.marker = null; } continue; }
+    u.age = u.heardAt !== undefined ? now - u.heardAt : 1e9;
+    u.lost = u.age > LOST_S || !u.fix;
+    u.moving = u.fix && u.speed > 1.5;
+    if (u.alert && !u.lost) alerts.push(u.name);
+    while (u.trail.length && now - u.trail[0].t > TRAIL_S) u.trail.shift();
+    if (!u.fix || u.lat === undefined) { others.push(u); continue; }
+
+    // Dead-reckon a little between packets so markers glide instead of jumping.
+    let p = { lat: u.lat, lon: u.lon };
+    if (u.moving && u.fixAt !== null && !u.lost) p = move(p, u.heading, u.speed * Math.min(now - u.fixAt, PREDICT_MAX_S));
+    u.shown = p;
+    u.dist = me ? distM(me, p) : null;
+
+    placeMarker(u, p, markerHtml(u, u.name), 0);
+    const pts = u.trail.map(t => [t.lat, t.lon]).concat([[p.lat, p.lon]]);
+    if (!u.line) u.line = L.polyline(pts, { color: u.color, weight: 4, opacity: .55 }).addTo(map);
+    else u.line.setLatLngs(pts);
+    others.push(u);
+  }
+
+  // Our own position.
+  if (me) {
+    const mine = { marker: window.meMarker, html: meState.html, color: mySlot >= 0 ? COLORS[mySlot] : "#555", text: "Me", lost: false, alert: alertOn,
+                   moving: me.speed > 1.5, heading: me.heading || 0 };
+    placeMarker(mine, me, markerHtml(mine, "You"), 1000);
+    window.meMarker = mine.marker;
+    meState.marker = mine.marker; meState.html = mine.html;
+  }
+
+  updateView(others);
+  renderList(others);
+  renderStatus(others);
+  const banner = $("banner");
+  banner.style.display = alerts.length ? "block" : "none";
+  banner.textContent = alerts.length ? "⚠ " + alerts.join(", ") + (alerts.length > 1 ? " need" : " needs") + " to stop" : "";
+}
+
+const meState = { marker: null, html: "" };
+
+// Only rebuild a marker's DOM when its content changes.
+function placeMarker(o, p, html, z) {
+  const icon = () => L.divIcon({ className: "", html, iconSize: [34, 34], iconAnchor: [17, 17] });
+  if (!o.marker) { o.marker = L.marker([p.lat, p.lon], { icon: icon(), zIndexOffset: z }).addTo(map); o.html = html; return; }
+  o.marker.setLatLng([p.lat, p.lon]);
+  if (o.html !== html) { o.marker.setIcon(icon()); o.html = html; }
+}
+
+function updateView(others) {
+  if (follow && me) {
+    map.panTo([me.lat, me.lon], { animate: true, duration: .4 });
+  } else if (!follow && window.fitPending) {
+    const pts = others.filter(u => u.shown && !u.lost).map(u => [u.shown.lat, u.shown.lon]);
+    if (me) pts.push([me.lat, me.lon]);
+    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.25), { maxZoom: 16 });
+    window.fitPending = false;
+  }
+}
+
+function renderList(others) {
+  const list = $("list");
+  if (!others.length) {
+    list.innerHTML = `<div class="empty">${status || demo ? "No other units heard yet." : "Connect your LoRa unit to see the convoy."}</div>`;
+    return;
+  }
+  others.sort((a, b) => (a.lost - b.lost) || ((a.dist ?? 1e12) - (b.dist ?? 1e12)) || a.slot - b.slot);
+  const myHeading = me && me.speed > 1.5 ? me.heading : null;
+  list.innerHTML = others.map(u => {
+    const dist = u.dist != null && u.fix ? fmtDist(u.dist) : (u.fix ? "—" : "no GPS");
+    const dir = u.dist != null && me && u.shown ? (myHeading !== null ? clockDir(bearing(me, u.shown), myHeading)
+                : ["N","NE","E","SE","S","SW","W","NW"][Math.round(bearing(me, u.shown) / 45) % 8]) : "";
+    const meta = [
+      u.fix ? Math.round(u.speed * 2.23694) + " mph" : null,
+      u.batt !== 255 && u.batt !== undefined ? "unit " + u.batt + "%" : null,
+      u.phoneBatt !== 255 && u.phoneBatt !== undefined ? "phone " + u.phoneBatt + "%" : null,
+      u.relayed ? "via " + (units.get(u.via)?.name || "slot " + (u.via + 1)) : (u.rssi !== undefined ? u.rssi + " dBm" : null),
+    ].filter(Boolean).join(" · ");
+    return `<div class="unit ${u.lost ? "lost" : ""} ${u.alert ? "alert" : ""}">
+      <div class="dot" style="background:${u.color}">${u.slot + 1}</div>
+      <div class="name">${u.alert ? "⚠ " : ""}${esc(u.name)}</div>
+      <div class="dist">${u.lost && u.age > LOST_S ? "LOST" : dist}</div>
+      <div class="meta">${esc(meta)}${dir ? " · " + dir : ""}</div>
+      <div class="ago">${fmtAgo(u.age)}</div>
+    </div>`;
+  }).join("");
+}
+
+function renderStatus(others) {
+  const el = $("status");
+  if (demo) { el.innerHTML = `<span class="pill warn">Demo mode</span><span>Simulated convoy of ${others.length + 1} cars</span>`; return; }
+  if (!dev) { el.innerHTML = "<span>Not connected</span>"; return; }
+  if (!status) { el.innerHTML = `<span class="pill warn">${connecting ? "Connecting…" : "Waiting for unit"}</span>`; return; }
+  const parts = [];
+  parts.push(posChr ? `<span class="pill ok">Connected</span>` : `<span class="pill bad">Reconnecting…</span>`);
+  if (!status.radioOk) parts.push(`<span class="pill bad">Radio fault</span>`);
+  if (status.conflict) parts.push(`<span class="pill bad">Slot ${status.slot + 1} clash – change slot</span>`);
+  parts.push(`<span>Slot <b>${status.slot + 1}</b></span>`);
+  parts.push(`<span>${status.ref === 255 ? "Leading timing" : "Synced to slot " + (status.ref + 1)}</span>`);
+  parts.push(`<span>Heard <b>${status.heard}</b></span>`);
+  if (status.batt !== 255) parts.push(`<span>Unit <b>${status.batt}%</b></span>`);
+  parts.push(me ? `<span>GPS ±${Math.round(me.acc)} m</span>` : `<span class="pill warn">No phone GPS</span>`);
+  el.innerHTML = parts.join("");
+}
+
+function renderAlertBtn() {
+  const b = $("btnAlert");
+  b.className = alertOn ? "alert-on" : "";
+  b.textContent = alertOn ? "Cancel stop" : "Need stop";
+}
+
+function setFollow(on) {
+  follow = on;
+  $("btnView").textContent = on ? "Fit all" : "Follow me";
+  if (!on) window.fitPending = true;
+  render();
+}
+
+function toast(t) {
+  const m = $("msg");
+  m.textContent = t;
+  m.style.display = "block";
+  clearTimeout(toast.h);
+  toast.h = setTimeout(() => m.style.display = "none", 3500);
+}
+
+// ---------------------------------------------------------------- phone GPS -> unit
+
+function startGps() {
+  if (!("geolocation" in navigator)) { toast("This browser has no GPS access"); return; }
+  navigator.geolocation.watchPosition(onPhonePos, (e) => toast("GPS: " + e.message),
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+}
+
+function onPhonePos(p) {
+  if (demo) return;
+  const c = p.coords;
+  const speed = c.speed ?? 0;
+  const heading = (c.heading === null || isNaN(c.heading)) ? (me ? me.heading : 0) : c.heading;
+  me = { lat: c.latitude, lon: c.longitude, speed, heading, acc: c.accuracy, t: performance.now() / 1000 };
+  sendPos(c.heading === null || isNaN(c.heading));
+  render();
+}
+
+async function sendPos(noHeading) {
+  if (!posChr || !me) return;
+  const now = performance.now();
+  if (now - lastSent < 400) return;
+  lastSent = now;
+  const b = new DataView(new ArrayBuffer(15));
+  b.setInt32(0, Math.round(me.lat * 1e7), true);
+  b.setInt32(4, Math.round(me.lon * 1e7), true);
+  b.setUint16(8, Math.min(65535, Math.round(me.speed * 100)), true);
+  b.setUint16(10, noHeading ? 0xFFFF : Math.round(me.heading * 100) % 36000, true);
+  b.setUint8(12, Math.min(254, Math.round(me.acc)));
+  b.setUint8(13, phoneBatt);
+  b.setUint8(14, 0x01 | (alertOn ? 0x02 : 0));
+  try { await posChr.writeValueWithoutResponse(b.buffer); } catch (e) { console.warn("pos write", e); }
+}
+
+// ---------------------------------------------------------------- Bluetooth
+
+async function connect() {
+  if (!navigator.bluetooth) {
+    toast("Web Bluetooth isn't available. Use Chrome on Android, served over https.");
+    return;
+  }
+  stopDemo();
+  try {
+    dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SVC] }] });
+  } catch (e) { return; }
+  dev.addEventListener("gattserverdisconnected", onDisconnected);
+  await gattConnect();
+}
+
+async function gattConnect() {
+  if (!dev || connecting) return;
+  connecting = true;
+  render();
+  try {
+    const server = await dev.gatt.connect();
+    const svc = await server.getPrimaryService(SVC);
+    posChr = await svc.getCharacteristic(POS);
+    cfgChr = await svc.getCharacteristic(CFG);
+    const nodes = await svc.getCharacteristic(NODES);
+    nodes.addEventListener("characteristicvaluechanged", (e) => { onRecord(e.target.value); });
+    await nodes.startNotifications();
+    $("btnConnect").textContent = dev.name || "Connected";
+    $("btnConnect").classList.remove("primary");
+    keepAwake();
+    toast("Connected to " + (dev.name || "unit"));
+  } catch (e) {
+    console.warn(e);
+    posChr = cfgChr = null;
+    setTimeout(gattConnect, 2000);
+  } finally {
+    connecting = false;
+    render();
+  }
+}
+
+function onDisconnected() {
+  posChr = cfgChr = null;
+  toast("Unit disconnected – reconnecting…");
+  render();
+  setTimeout(gattConnect, 1000);
+}
+
+async function openSettings() {
+  const sel = $("cfgSlot");
+  if (!sel.options.length) for (let i = 0; i < 8; i++) sel.add(new Option("Slot " + (i + 1), i));
+  if (cfgChr) {
+    try {
+      const v = await cfgChr.readValue();
+      $("cfgNet").value = v.getUint8(0);
+      sel.value = v.getUint8(1);
+      $("cfgPwr").value = v.getInt8(2);
+      let n = "";
+      for (let i = 3; i < v.byteLength; i++) { const c = v.getUint8(i); if (!c) break; n += String.fromCharCode(c); }
+      $("cfgName").value = n;
+    } catch (e) { toast("Couldn't read settings"); }
+  }
+  $("dlg").showModal();
+}
+
+async function saveSettings() {
+  if (!cfgChr) { toast("Connect the unit first"); return; }
+  const name = $("cfgName").value.replace(/[^\x20-\x7e]/g, "").slice(0, 12);
+  const b = new Uint8Array(15);
+  b[0] = Math.max(0, Math.min(255, parseInt($("cfgNet").value) || 0));
+  b[1] = parseInt($("cfgSlot").value) || 0;
+  b[2] = Math.max(2, Math.min(20, parseInt($("cfgPwr").value) || 20));
+  for (let i = 0; i < name.length; i++) b[3 + i] = name.charCodeAt(i);
+  try {
+    await cfgChr.writeValueWithResponse(b);
+    units.clear();
+    map.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.Polyline) l.remove(); });
+    window.meMarker = null;
+    toast("Saved");
+  } catch (e) { toast("Save failed: " + e.message); }
+}
+
+async function keepAwake() {
+  try { if ("wakeLock" in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock?.addEventListener("release", () => wakeLock = null); } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && (dev || demo)) keepAwake(); });
+
+// ---------------------------------------------------------------- demo: a simulated convoy
+
+function startDemo() {
+  units.clear();
+  status = { slot: 0, net: 42, synced: false, conflict: false, alert: false, radioOk: true, gps: false,
+             batt: 91, ref: 255, pwr: 20, heard: 4, tx: 0 };
+  // A loop of road around a fixed point; each car follows ~250-600 m behind the one in front.
+  const centre = { lat: 52.205, lon: 0.119 }, R = 2200;
+  const names = ["You", "Dave", "Sarah", "Mo", "Priya"];
+  const gaps = [0, 300, 650, 900, 2600];
+  let s = 0;
+  demo = setInterval(() => {
+    s += 31.3 * 0.25;  // 70 mph, ticking every 250 ms
+    const t0 = performance.now() / 1000;
+    names.forEach((nm, i) => {
+      const along = s - gaps[i];
+      const ang = along / R;
+      const p = { lat: centre.lat + (R * Math.cos(ang)) / 111320,
+                  lon: centre.lon + (R * Math.sin(ang)) / (111320 * Math.cos(centre.lat * Math.PI / 180)) };
+      const heading = (ang * 180 / Math.PI + 90) % 360;
+      if (i === 0) { me = { lat: p.lat, lon: p.lon, speed: 31.3, heading, acc: 4 }; return; }
+      // Car 4 drops in and out of range; car 2 is relayed.
+      const outOfRange = i === 4 && Math.floor(t0 / 20) % 2 === 1;
+      if (outOfRange) return;
+      const dv = new DataView(new ArrayBuffer(20));
+      dv.setUint8(0, 1);
+      dv.setUint8(1, i | 0x08 | (i === 3 && Math.floor(t0 / 30) % 3 === 2 ? 0x10 : 0) | (i === 2 ? 0x40 : 0));
+      dv.setInt32(2, Math.round(p.lat * 1e7), true);
+      dv.setInt32(6, Math.round(p.lon * 1e7), true);
+      dv.setUint16(10, 3130, true);
+      dv.setUint8(12, Math.round(heading * 256 / 360) & 255);
+      dv.setUint8(13, [0, 88, 64, 23, 75][i]);
+      dv.setUint8(14, [0, 51, 80, 12, 99][i]);
+      dv.setInt8(15, [0, -71, -96, -84, -112][i]);
+      dv.setInt8(16, 7);
+      dv.setUint8(17, 0);
+      dv.setUint8(18, 2);
+      dv.setUint8(19, i === 2 ? 1 : 255);
+      if (Math.random() < 0.25) onRecord(dv);   // ~1 update/s per car, like the radio
+    });
+    names.forEach((nm, i) => {
+      if (!i) return;
+      const dv = new DataView(new ArrayBuffer(14));
+      dv.setUint8(0, 2); dv.setUint8(1, i);
+      for (let k = 0; k < nm.length; k++) dv.setUint8(2 + k, nm.charCodeAt(k));
+      onRecord(dv);
+    });
+  }, 250);
+  map.setView([centre.lat, centre.lon], 14);
+  toast("Demo: 5 cars at 70 mph");
+}
+
+function stopDemo() {
+  if (!demo) return;
+  clearInterval(demo);
+  demo = null;
+  status = null;
+  me = null;
+  units.forEach(u => { u.marker?.remove(); u.line?.remove(); });
+  units.clear();
+  window.meMarker?.remove();
+  window.meMarker = null;
+}
+
+// ---------------------------------------------------------------- wire up
+
+$("btnConnect").onclick = connect;
+$("btnView").onclick = () => setFollow(!follow);
+$("btnAlert").onclick = () => { alertOn = !alertOn; renderAlertBtn(); lastSent = 0; sendPos(false); render(); };
+$("btnSettings").onclick = openSettings;
+$("btnSave").onclick = (e) => { e.preventDefault(); $("dlg").close(); saveSettings(); };
+$("btnDemo").onclick = () => { $("dlg").close(); if (demo) stopDemo(); else { startDemo(); keepAwake(); } };
+
+if (navigator.getBattery) navigator.getBattery().then(b => {
+  const upd = () => phoneBatt = Math.round(b.level * 100);
+  upd();
+  b.addEventListener("levelchange", upd);
+});
+
+startGps();
+setInterval(render, 250);
+if (new URLSearchParams(location.search).has("demo")) startDemo();
+</script>
+</body>
+</html>
