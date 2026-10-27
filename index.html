@@ -73,6 +73,31 @@ dialog input, dialog select { width: 100%; font: inherit; padding: 9px 10px; bor
   border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
 dialog p.hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+/* Incoming message: full screen, huge text, readable at a glance */
+#msgPop { position: fixed; inset: 0; z-index: 3000; display: none; flex-direction: column; justify-content: center;
+  gap: 18px; padding: 24px max(20px, env(safe-area-inset-left)); background: #000; color: #fff; text-align: center; cursor: pointer; }
+#msgPop .from { font-size: clamp(22px, 6vw, 40px); font-weight: 700; }
+#msgPop .from span { display: inline-block; width: .8em; height: .8em; border-radius: 50%; margin-right: .3em; vertical-align: -.05em; }
+#msgPop .text { font-size: clamp(40px, 12vw, 110px); font-weight: 800; line-height: 1.1; overflow-wrap: anywhere; color: #ffd600; }
+#msgPop .hint { font-size: 16px; color: #aaa; }
+#msgPop .bar { height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
+#msgPop .bar div { height: 100%; background: #ffd600; width: 100%; }
+#msgPop .more { font-size: 16px; color: #ffd600; }
+.quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.quick button { min-height: 56px; font-size: 16px; font-weight: 600; }
+.quick input { min-height: 56px; font-size: 16px; font-weight: 600; text-align: center; padding: 6px; }
+.quick.editing { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 10px; }
+.msgbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+.msgbar h2 { margin: 0; }
+.linkbtn { border: none; background: none; color: var(--accent); padding: 6px 4px; min-height: 0; font-weight: 600; }
+.sendrow { display: flex; gap: 8px; margin-top: 12px; }
+.sendrow input { flex: 1; min-width: 0; }
+.history { margin-top: 14px; max-height: 30vh; overflow-y: auto; border-top: 1px solid var(--line); }
+.history div { padding: 6px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.history .who { font-weight: 700; }
+.history .t { color: var(--muted); font-size: 12px; float: right; }
+.check { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; color: var(--muted); }
+.check input { width: auto; }
 #msg { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg);
   padding: 8px 14px; border-radius: 10px; display: none; z-index: 2000; max-width: calc(100vw - 32px); }
 </style>
@@ -83,6 +108,7 @@ dialog p.hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
   <button id="btnConnect" class="primary">Connect unit</button>
   <button id="btnView" title="Switch between following you and showing everyone">Fit all</button>
   <button id="btnAlert" title="Tell the convoy you need to stop">Need stop</button>
+  <button id="btnMsg" title="Send a message to the convoy">💬 Message</button>
   <button id="btnSettings" aria-label="Settings">⚙</button>
   <div id="status"><span>Not connected</span></div>
 </header>
@@ -90,6 +116,33 @@ dialog p.hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
 <div id="map"></div>
 <div id="list"><div class="empty">Connect your LoRa unit to see the convoy.</div></div>
 <div id="msg"></div>
+
+<div id="msgPop" role="alertdialog" aria-live="assertive">
+  <div class="from"></div>
+  <div class="text"></div>
+  <div class="more"></div>
+  <div class="bar"><div></div></div>
+  <div class="hint">Tap anywhere to close</div>
+</div>
+
+<dialog id="dlgMsg">
+  <div class="msgbar">
+    <h2>Message the convoy</h2>
+    <button class="linkbtn" id="btnEditQuick">Edit buttons</button>
+  </div>
+  <div class="quick" id="quick"></div>
+  <div class="msgbar" id="quickEditBar" style="display:none;margin:10px 0 0">
+    <button class="linkbtn" id="btnResetQuick">Reset to defaults</button>
+    <button class="primary" id="btnSaveQuick">Save buttons</button>
+  </div>
+  <div class="sendrow">
+    <input id="msgText" maxlength="40" placeholder="Or type a message (40 max)" autocomplete="off">
+    <button class="primary" id="btnSend">Send</button>
+  </div>
+  <label class="check"><input type="checkbox" id="chkSpeak"> Read incoming messages aloud</label>
+  <div class="history" id="history"></div>
+  <div class="row" style="display:flex;justify-content:flex-end;margin-top:12px"><button id="btnMsgClose">Close</button></div>
+</dialog>
 
 <dialog id="dlg">
   <form method="dialog" id="cfgForm">
@@ -117,6 +170,10 @@ const SVC   = "7e0c0000-2b6a-4d31-9c8e-5a7b3c1d0000";
 const POS   = "7e0c0001-2b6a-4d31-9c8e-5a7b3c1d0000";
 const NODES = "7e0c0002-2b6a-4d31-9c8e-5a7b3c1d0000";
 const CFG   = "7e0c0003-2b6a-4d31-9c8e-5a7b3c1d0000";
+const MSG   = "7e0c0004-2b6a-4d31-9c8e-5a7b3c1d0000";
+const QUICK_DEFAULT = ["Fuel stop", "Toilet stop", "Food stop", "Take next exit", "Slow down",
+               "Lost you - wait", "Pull over when safe", "All good"];
+const MSG_SHOW_S = 20;
 const COLORS = ["#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00897b", "#6d4c41", "#d81b60"];
 const LOST_S = 15, PREDICT_MAX_S = 2, TRAIL_S = 120;
 
@@ -125,7 +182,16 @@ const units = new Map();      // slot -> unit
 let status = null;            // last status record from the unit
 let me = null;                // { lat, lon, speed, heading, acc, t }
 let follow = true, alertOn = false, demo = null;
-let dev = null, posChr = null, cfgChr = null, connecting = false;
+let dev = null, posChr = null, cfgChr = null, msgChr = null, connecting = false;
+const msgParts = new Map(), msgSeen = new Set(), msgQueue = [], history = [];
+let msgTimer = null, speak = true, demoTimers = [], editingQuick = false;
+// The 8 quick-message buttons are saved on this phone.
+let quick = QUICK_DEFAULT.slice();
+try {
+  const saved = JSON.parse(localStorage.getItem("quick") || "null");
+  if (Array.isArray(saved) && saved.length === 8) quick = saved.map(String);
+} catch (e) {}
+try { speak = localStorage.getItem("speak") !== "0"; } catch (e) {}
 let phoneBatt = 255, lastSent = 0, wakeLock = null;
 
 // ---------------------------------------------------------------- map
@@ -228,6 +294,19 @@ function onRecord(dv) {
       name += String.fromCharCode(c);
     }
     if (name) getUnit(slot).name = name;
+  } else if (type === 4 && dv.byteLength >= 6) {
+    // Message pieces: origin | id | total | offset | text
+    const origin = dv.getUint8(1) & 7, id = dv.getUint8(2), total = dv.getUint8(3), off = dv.getUint8(4);
+    const key = origin + ":" + id;
+    if (msgSeen.has(key)) return;
+    const parts = msgParts.get(key) || [];
+    for (let i = 5; i < dv.byteLength; i++) parts[off + i - 5] = String.fromCharCode(dv.getUint8(i));
+    msgParts.set(key, parts);
+    if (parts.filter(c => c !== undefined).length >= total) {
+      msgParts.delete(key);
+      msgSeen.add(key);
+      receiveMessage(origin, parts.join(""));
+    }
   } else if (type === 3 && dv.byteLength >= 10) {
     const f = dv.getUint8(3);
     status = { slot: dv.getUint8(1), net: dv.getUint8(2), synced: !!(f & 1), conflict: !!(f & 2),
@@ -407,6 +486,106 @@ async function sendPos(noHeading) {
   try { await posChr.writeValueWithoutResponse(b.buffer); } catch (e) { console.warn("pos write", e); }
 }
 
+// ---------------------------------------------------------------- messages
+
+function receiveMessage(slot, text) {
+  const u = getUnit(slot);
+  history.unshift({ who: u.name, color: u.color, text, t: new Date() });
+  if (history.length > 30) history.pop();
+  renderHistory();
+  msgQueue.push({ who: u.name, color: u.color, text });
+  if (!msgTimer) showNextMessage();
+}
+
+function showNextMessage() {
+  const pop = $("msgPop");
+  const m = msgQueue.shift();
+  if (!m) { pop.style.display = "none"; msgTimer = null; return; }
+  pop.querySelector(".from").innerHTML = `<span style="background:${m.color}"></span>${esc(m.who)}`;
+  pop.querySelector(".text").textContent = m.text;
+  pop.querySelector(".more").textContent = msgQueue.length ? msgQueue.length + " more message" + (msgQueue.length > 1 ? "s" : "") : "";
+  pop.style.display = "flex";
+  // Countdown bar, then close on its own.
+  const bar = pop.querySelector(".bar div");
+  bar.style.transition = "none"; bar.style.width = "100%";
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    bar.style.transition = `width ${MSG_SHOW_S}s linear`; bar.style.width = "0%";
+  }));
+  clearTimeout(msgTimer);
+  msgTimer = setTimeout(showNextMessage, MSG_SHOW_S * 1000);
+  if (navigator.vibrate) navigator.vibrate([300, 120, 300]);
+  if (speak && "speechSynthesis" in window) {
+    speechSynthesis.cancel();
+    const say = new SpeechSynthesisUtterance(`Message from ${m.who}. ${m.text}`);
+    say.lang = "en-GB";
+    speechSynthesis.speak(say);
+  }
+}
+
+function renderHistory() {
+  $("history").innerHTML = history.length ? history.map(h =>
+    `<div><span class="t">${h.t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>` +
+    `<span class="who" style="color:${h.color}">${esc(h.who)}:</span> ${esc(h.text)}</div>`).join("")
+    : `<div style="color:var(--muted)">No messages yet.</div>`;
+}
+
+async function sendMessage(text) {
+  text = cleanText(text);
+  if (!text) return;
+  if (!demo) {
+    if (!msgChr) { toast(dev ? "This unit's firmware has no messaging – reflash it" : "Connect your unit first"); return; }
+    try { await msgChr.writeValueWithResponse(new TextEncoder().encode(text)); }
+    catch (e) { toast("Send failed: " + e.message); return; }
+  }
+  history.unshift({ who: "You", color: "var(--accent)", text, t: new Date() });
+  renderHistory();
+  $("msgText").value = "";
+  $("dlgMsg").close();
+  toast("Sent to convoy: " + text);
+}
+
+function cleanText(t) { return t.replace(/[^\x20-\x7e]/g, "").trim().slice(0, 40); }
+
+// Buttons to send, or text boxes while editing.
+function renderQuick() {
+  const q = $("quick");
+  q.innerHTML = "";
+  q.classList.toggle("editing", editingQuick);
+  quick.forEach((t, i) => {
+    let el;
+    if (editingQuick) {
+      el = document.createElement("input");
+      el.value = t;
+      el.maxLength = 40;
+      el.placeholder = "Empty = hidden";
+      el.setAttribute("aria-label", "Quick message " + (i + 1));
+    } else {
+      if (!t) return;
+      el = document.createElement("button");
+      el.textContent = t;
+      el.onclick = () => sendMessage(t);
+    }
+    q.appendChild(el);
+  });
+  $("quickEditBar").style.display = editingQuick ? "flex" : "none";
+  $("btnEditQuick").textContent = editingQuick ? "Cancel" : "Edit buttons";
+}
+
+function saveQuick(list) {
+  quick = list;
+  try { localStorage.setItem("quick", JSON.stringify(quick)); } catch (e) {}
+  editingQuick = false;
+  renderQuick();
+}
+
+function openMessages() {
+  editingQuick = false;
+  renderQuick();
+  $("chkSpeak").checked = speak;
+  renderHistory();
+  $("dlgMsg").showModal();
+}
+
 // ---------------------------------------------------------------- Bluetooth
 
 async function connect() {
@@ -431,6 +610,7 @@ async function gattConnect() {
     const svc = await server.getPrimaryService(SVC);
     posChr = await svc.getCharacteristic(POS);
     cfgChr = await svc.getCharacteristic(CFG);
+    try { msgChr = await svc.getCharacteristic(MSG); } catch (e) { msgChr = null; }
     const nodes = await svc.getCharacteristic(NODES);
     nodes.addEventListener("characteristicvaluechanged", (e) => { onRecord(e.target.value); });
     await nodes.startNotifications();
@@ -440,7 +620,7 @@ async function gattConnect() {
     toast("Connected to " + (dev.name || "unit"));
   } catch (e) {
     console.warn(e);
-    posChr = cfgChr = null;
+    posChr = cfgChr = msgChr = null;
     setTimeout(gattConnect, 2000);
   } finally {
     connecting = false;
@@ -449,7 +629,7 @@ async function gattConnect() {
 }
 
 function onDisconnected() {
-  posChr = cfgChr = null;
+  posChr = cfgChr = msgChr = null;
   toast("Unit disconnected – reconnecting…");
   render();
   setTimeout(gattConnect, 1000);
@@ -545,11 +725,17 @@ function startDemo() {
   }, 250);
   map.setView([centre.lat, centre.lon], 14);
   toast("Demo: 5 cars at 70 mph");
+  const demoMsgs = [[2, "Fuel stop"], [3, "Take next exit"], [1, "Lost you - wait"], [4, "All good"]];
+  let k = 0;
+  demoTimers.push(setInterval(() => { const [slot, t] = demoMsgs[k++ % demoMsgs.length]; receiveMessage(slot, t); }, 30000));
+  demoTimers.push(setTimeout(() => receiveMessage(2, "Fuel stop at next services"), 8000));
 }
 
 function stopDemo() {
   if (!demo) return;
   clearInterval(demo);
+  demoTimers.forEach(t => { clearInterval(t); clearTimeout(t); });
+  demoTimers = [];
   demo = null;
   status = null;
   me = null;
@@ -565,6 +751,18 @@ $("btnConnect").onclick = connect;
 $("btnView").onclick = () => setFollow(!follow);
 $("btnAlert").onclick = () => { alertOn = !alertOn; renderAlertBtn(); lastSent = 0; sendPos(false); render(); };
 $("btnSettings").onclick = openSettings;
+$("btnMsg").onclick = openMessages;
+$("btnMsgClose").onclick = () => $("dlgMsg").close();
+$("btnEditQuick").onclick = () => { editingQuick = !editingQuick; renderQuick(); };
+$("btnSaveQuick").onclick = () => {
+  saveQuick([...$("quick").querySelectorAll("input")].map(i => cleanText(i.value)));
+  toast("Quick messages saved on this phone");
+};
+$("btnResetQuick").onclick = () => saveQuick(QUICK_DEFAULT.slice());
+$("btnSend").onclick = () => sendMessage($("msgText").value);
+$("msgText").addEventListener("keydown", (e) => { if (e.key === "Enter") sendMessage($("msgText").value); });
+$("chkSpeak").onchange = (e) => { speak = e.target.checked; try { localStorage.setItem("speak", speak ? "1" : "0"); } catch (err) {} };
+$("msgPop").onclick = () => { window.speechSynthesis?.cancel(); clearTimeout(msgTimer); msgTimer = null; showNextMessage(); };
 $("btnSave").onclick = (e) => { e.preventDefault(); $("dlg").close(); saveSettings(); };
 $("btnDemo").onclick = () => { $("dlg").close(); if (demo) stopDemo(); else { startDemo(); keepAwake(); } };
 
