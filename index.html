@@ -7,6 +7,7 @@
 <title>Convoy Tracker</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 <style>
 :root {
   --bg: #f4f5f7; --panel: #ffffff; --text: #15181d; --muted: #5b6370; --line: #dde1e6;
@@ -31,6 +32,11 @@ header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; paddin
 header h1 { font-size: 17px; margin: 0 auto 0 0; white-space: nowrap; }
 button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
   border-radius: 10px; padding: 8px 12px; min-height: 40px; cursor: pointer; }
+@media (max-width: 560px) {
+  header h1 { display: none; }
+  header { gap: 6px; }
+  header button { padding: 6px 10px; min-height: 38px; }
+}
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button.alert-on { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 700; }
 #status { font-size: 13px; color: var(--muted); width: 100%; display: flex; gap: 10px; flex-wrap: wrap; }
@@ -98,6 +104,36 @@ dialog p.hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
 .history .t { color: var(--muted); font-size: 12px; float: right; }
 .check { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; color: var(--muted); }
 .check input { width: auto; }
+/* Shared waypoint */
+.wpin { position: relative; width: 30px; height: 40px; }
+.wpin .p { position: absolute; left: 3px; top: 0; width: 24px; height: 24px; background: #d32f2f; border: 2px solid #fff;
+  border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.wpin .p::after { content: ""; position: absolute; left: 6px; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: #fff; }
+.wpin .lbl, .wlbl { position: absolute; white-space: nowrap; background: rgba(0,0,0,.78); color: #fff;
+  font-size: 13px; font-weight: 700; padding: 2px 7px; border-radius: 6px; }
+.wpin .lbl { top: 30px; left: 50%; transform: translateX(-50%); }
+.wlbl { transform: translate(-50%, -50%); border: 1px solid #ffd600; }
+#wptBar { display: none; align-items: center; gap: 10px; padding: 8px 12px; background: var(--panel);
+  border-top: 1px solid var(--line); cursor: pointer; }
+#wptBar .ic { width: 14px; height: 14px; background: #d32f2f; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); flex: none; }
+#wptBar .t { flex: 1; min-width: 0; }
+#wptBar .t b { font-size: 16px; }
+#wptBar .t div { color: var(--muted); font-size: 13px; }
+#wptBar .d { font-size: 18px; font-weight: 700; text-align: right; white-space: nowrap; }
+body.placing #map { cursor: crosshair; }
+#placeHint { display: none; position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 1000;
+  background: #d32f2f; color: #fff; font-weight: 700; padding: 8px 14px; border-radius: 10px; box-shadow: var(--shadow); }
+body.placing #placeHint { display: block; }
+#map { position: relative; }
+/* North-up / heading-up toggle */
+.compass { width: 46px; height: 46px; border-radius: 50%; padding: 0; display: grid; place-items: center;
+  box-shadow: var(--shadow); position: relative; }
+.compass .needle { width: 30px; height: 30px; display: grid; place-items: start center; transition: transform .25s linear; }
+.compass .needle::before { content: ""; border: 6px solid transparent; border-bottom: 11px solid #d32f2f; margin-top: -6px; }
+.compass .needle b { position: absolute; top: 9px; font-size: 11px; }
+.compass .mode { position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  font-size: 11px; font-weight: 700; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; }
+.compass.on { border-color: var(--accent); }
 #msg { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg);
   padding: 8px 14px; border-radius: 10px; display: none; z-index: 2000; max-width: calc(100vw - 32px); }
 </style>
@@ -109,11 +145,17 @@ dialog p.hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
   <button id="btnView" title="Switch between following you and showing everyone">Fit all</button>
   <button id="btnAlert" title="Tell the convoy you need to stop">Need stop</button>
   <button id="btnMsg" title="Send a message to the convoy">💬 Message</button>
+  <button id="btnWpt" title="Drop a waypoint for the convoy">📍 Pin</button>
   <button id="btnSettings" aria-label="Settings">⚙</button>
   <div id="status"><span>Not connected</span></div>
 </header>
 <div id="banner"></div>
-<div id="map"></div>
+<div id="map"><div id="placeHint">Tap the map to drop the pin</div></div>
+<div id="wptBar" title="Rename, show or clear the waypoint">
+  <div class="ic"></div>
+  <div class="t"><b></b><div></div></div>
+  <div class="d"></div>
+</div>
 <div id="list"><div class="empty">Connect your LoRa unit to see the convoy.</div></div>
 <div id="msg"></div>
 
@@ -144,6 +186,19 @@ dialog p.hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
   <div class="row" style="display:flex;justify-content:flex-end;margin-top:12px"><button id="btnMsgClose">Close</button></div>
 </dialog>
 
+<dialog id="dlgWpt">
+  <h2>Waypoint for the convoy</h2>
+  <label for="wptLabel">Name (shown on everyone's map, max 18)</label>
+  <input id="wptLabel" maxlength="18" autocomplete="off" placeholder="Meet here">
+  <p class="hint" id="wptWhere"></p>
+  <div class="row">
+    <button id="btnWptClear" style="margin-right:auto;color:var(--bad)">Clear waypoint</button>
+    <button id="btnWptShow">Show on map</button>
+    <button id="btnWptCancel">Cancel</button>
+    <button class="primary" id="btnWptSend">Send to convoy</button>
+  </div>
+</dialog>
+
 <dialog id="dlg">
   <form method="dialog" id="cfgForm">
     <h2>Unit settings</h2>
@@ -171,18 +226,25 @@ const POS   = "7e0c0001-2b6a-4d31-9c8e-5a7b3c1d0000";
 const NODES = "7e0c0002-2b6a-4d31-9c8e-5a7b3c1d0000";
 const CFG   = "7e0c0003-2b6a-4d31-9c8e-5a7b3c1d0000";
 const MSG   = "7e0c0004-2b6a-4d31-9c8e-5a7b3c1d0000";
+const WPT   = "7e0c0005-2b6a-4d31-9c8e-5a7b3c1d0000";
 const QUICK_DEFAULT = ["Fuel stop", "Toilet stop", "Food stop", "Take next exit", "Slow down",
                "Lost you - wait", "Pull over when safe", "All good"];
 const MSG_SHOW_S = 20;
 const COLORS = ["#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00897b", "#6d4c41", "#d81b60"];
-const LOST_S = 15, PREDICT_MAX_S = 2, TRAIL_S = 120;
+const STALE_S = 10, LOST_S = 15, PREDICT_MAX_S = 2, TRAIL_S = 120;
 
 const $ = (id) => document.getElementById(id);
 const units = new Map();      // slot -> unit
 let status = null;            // last status record from the unit
 let me = null;                // { lat, lon, speed, heading, acc, t }
 let follow = true, alertOn = false, demo = null;
-let dev = null, posChr = null, cfgChr = null, msgChr = null, connecting = false;
+// Map orientation: north up, or rotate so your direction of travel points up.
+let headingUp = false, mapBearing = 0;
+try { headingUp = localStorage.getItem("headingUp") === "1"; } catch (e) {}
+let dev = null, posChr = null, cfgChr = null, msgChr = null, wptChr = null, connecting = false;
+// The convoy's shared waypoint (from the unit), and what's drawn for it.
+let wpt = { known: false, active: false }, wptIncoming = null, wptDraft = null, placing = false;
+const wptLayer = { pin: null, line: null, label: null, html: "", lblHtml: "" };
 const msgParts = new Map(), msgSeen = new Set(), msgQueue = [], history = [];
 let msgTimer = null, speak = true, demoTimers = [], editingQuick = false;
 // The 8 quick-message buttons are saved on this phone.
@@ -196,18 +258,32 @@ let phoneBatt = 255, lastSent = 0, wakeLock = null;
 
 // ---------------------------------------------------------------- map
 
-const map = L.map("map", { zoomControl: false, attributionControl: true }).setView([54.5, -2.5], 6);
+const map = L.map("map", { zoomControl: false, attributionControl: true,
+  rotate: true, bearing: 0, rotateControl: false, touchRotate: false, shiftKeyRotate: false }).setView([54.5, -2.5], 6);
+const canRotate = typeof map.setBearing === "function";
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19, attribution: "© OpenStreetMap contributors"
 }).addTo(map);
 L.control.zoom({ position: "bottomright" }).addTo(map);
+const CompassControl = L.Control.extend({
+  onAdd() {
+    const b = L.DomUtil.create("button", "compass");
+    b.title = "Switch between north up and direction of travel up";
+    b.innerHTML = `<span class="needle"><b>N</b></span><span class="mode"></span>`;
+    L.DomEvent.disableClickPropagation(b);
+    b.onclick = () => setHeadingUp(!headingUp);
+    return b;
+  }
+});
+const compassEl = canRotate ? new CompassControl({ position: "topleft" }).addTo(map).getContainer() : null;
 map.on("dragstart", () => { if (follow) setFollow(false); });
 // The list below the map changes height as cars appear; keep Leaflet's size in step.
 new ResizeObserver(() => map.invalidateSize()).observe($("map"));
 
 function markerHtml(u, label) {
-  const cls = ["mk", u.lost ? "lost" : "", u.alert ? "alert" : ""].join(" ");
-  const arrow = u.moving ? `<div class="arrow" style="transform:rotate(${u.heading}deg)"></div>` : "";
+  const cls = ["mk", u.lost || u.stale ? "lost" : "", u.alert ? "alert" : ""].join(" ");
+  // Arrows are drawn on screen, so add the map's own rotation.
+  const arrow = u.moving ? `<div class="arrow" style="transform:rotate(${Math.round(u.heading + mapBearing)}deg)"></div>` : "";
   return `<div class="${cls}">${arrow}<div class="c" style="background:${u.color}">${u.text}</div>` +
          `<div class="lbl">${esc(label)}</div></div>`;
 }
@@ -294,6 +370,14 @@ function onRecord(dv) {
       name += String.fromCharCode(c);
     }
     if (name) getUnit(slot).name = name;
+  } else if (type === 5 && dv.byteLength >= 13) {
+    const f = dv.getUint8(1);
+    wptIncoming = { known: !!(f & 1), active: !!(f & 2), origin: dv.getUint8(2) & 7, version: dv.getUint16(3, true),
+                    lat: dv.getInt32(5, true) / 1e7, lon: dv.getInt32(9, true) / 1e7, label: "" };
+  } else if (type === 6 && wptIncoming) {
+    for (let i = 1; i < dv.byteLength; i++) wptIncoming.label += String.fromCharCode(dv.getUint8(i));
+    setWaypoint(wptIncoming);
+    wptIncoming = null;
   } else if (type === 4 && dv.byteLength >= 6) {
     // Message pieces: origin | id | total | offset | text
     const origin = dv.getUint8(1) & 7, id = dv.getUint8(2), total = dv.getUint8(3), off = dv.getUint8(4);
@@ -320,6 +404,29 @@ function onRecord(dv) {
 
 function selfSlot() { return status ? status.slot : -1; }
 
+function setHeadingUp(on) {
+  headingUp = on;
+  try { localStorage.setItem("headingUp", on ? "1" : "0"); } catch (e) {}
+  if (on && !follow) setFollow(true);
+  toast(on ? "Map turns with your direction of travel" : "North up");
+  render();
+}
+
+// Ease the map round towards the target so it doesn't lurch with GPS jitter.
+function updateBearing() {
+  if (!canRotate) return;
+  compassEl.classList.toggle("on", headingUp);
+  compassEl.querySelector(".mode").textContent = headingUp ? "Heading" : "North";
+  let target = mapBearing;
+  if (!headingUp) target = 0;
+  else if (me && me.speed > 2 && me.heading != null) target = -me.heading;   // keep the last heading when slow/stopped
+  const delta = ((target - mapBearing) % 360 + 540) % 360 - 180;
+  if (Math.abs(delta) < 0.5) return;
+  mapBearing = (mapBearing + (Math.abs(delta) < 3 ? delta : delta * 0.35) + 360) % 360;
+  map.setBearing(mapBearing);
+  compassEl.querySelector(".needle").style.transform = `rotate(${mapBearing}deg)`;
+}
+
 function render() {
   const now = performance.now() / 1000;
   const mySlot = selfSlot();
@@ -330,7 +437,10 @@ function render() {
     if (u.slot === mySlot) { if (u.marker) { u.marker.remove(); u.marker = null; } continue; }
     u.age = u.heardAt !== undefined ? now - u.heardAt : 1e9;
     u.lost = u.age > LOST_S || !u.fix;
-    u.moving = u.fix && u.speed > 1.5;
+    // Still heard, but its position has stopped updating (e.g. their phone app went to the background).
+    u.fixAgeS = u.fixAt != null ? now - u.fixAt : null;
+    u.stale = !u.lost && u.fixAgeS !== null && u.fixAgeS > STALE_S;
+    u.moving = u.fix && u.speed > 1.5 && !u.stale;
     if (u.alert && !u.lost) alerts.push(u.name);
     while (u.trail.length && now - u.trail[0].t > TRAIL_S) u.trail.shift();
     if (!u.fix || u.lat === undefined) { others.push(u); continue; }
@@ -357,6 +467,8 @@ function render() {
     meState.marker = mine.marker; meState.html = mine.html;
   }
 
+  renderWaypoint();
+  updateBearing();
   updateView(others);
   renderList(others);
   renderStatus(others);
@@ -377,10 +489,17 @@ function placeMarker(o, p, html, z) {
 
 function updateView(others) {
   if (follow && me) {
-    map.panTo([me.lat, me.lon], { animate: true, duration: .4 });
+    // Heading up: put your dot in the lower part of the screen so you see more of the road ahead.
+    let c = { lat: me.lat, lon: me.lon };
+    if (headingUp && canRotate) {
+      const metresPerPx = 40075016.686 * Math.cos(me.lat * Math.PI / 180) / Math.pow(2, map.getZoom() + 8);
+      c = move(c, -mapBearing, metresPerPx * map.getSize().y * 0.25);
+    }
+    map.panTo([c.lat, c.lon], { animate: true, duration: .4 });
   } else if (!follow && window.fitPending) {
     const pts = others.filter(u => u.shown && !u.lost).map(u => [u.shown.lat, u.shown.lon]);
     if (me) pts.push([me.lat, me.lon]);
+    if (wpt.active) pts.push([wpt.lat, wpt.lon]);
     if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.25), { maxZoom: 16 });
     window.fitPending = false;
   }
@@ -404,12 +523,12 @@ function renderList(others) {
       u.phoneBatt !== 255 && u.phoneBatt !== undefined ? "phone " + u.phoneBatt + "%" : null,
       u.relayed ? "via " + (units.get(u.via)?.name || "slot " + (u.via + 1)) : (u.rssi !== undefined ? u.rssi + " dBm" : null),
     ].filter(Boolean).join(" · ");
-    return `<div class="unit ${u.lost ? "lost" : ""} ${u.alert ? "alert" : ""}">
+    return `<div class="unit ${u.lost || u.stale ? "lost" : ""} ${u.alert ? "alert" : ""}">
       <div class="dot" style="background:${u.color}">${u.slot + 1}</div>
       <div class="name">${u.alert ? "⚠ " : ""}${esc(u.name)}</div>
       <div class="dist">${u.lost && u.age > LOST_S ? "LOST" : dist}</div>
       <div class="meta">${esc(meta)}${dir ? " · " + dir : ""}</div>
-      <div class="ago">${fmtAgo(u.age)}</div>
+      <div class="ago">${u.stale ? "GPS paused " + fmtAgo(u.fixAgeS).replace(" ago", "") : fmtAgo(u.age)}</div>
     </div>`;
   }).join("");
 }
@@ -427,7 +546,8 @@ function renderStatus(others) {
   parts.push(`<span>${status.ref === 255 ? "Leading timing" : "Synced to slot " + (status.ref + 1)}</span>`);
   parts.push(`<span>Heard <b>${status.heard}</b></span>`);
   if (status.batt !== 255) parts.push(`<span>Unit <b>${status.batt}%</b></span>`);
-  parts.push(me ? `<span>GPS ±${Math.round(me.acc)} m</span>` : `<span class="pill warn">No phone GPS</span>`);
+  if (status.gps) parts.push(`<span class="pill ok">Unit GPS</span>`);
+  else parts.push(me ? `<span>Phone GPS ±${Math.round(me.acc)} m</span>` : `<span class="pill warn">No GPS</span>`);
   el.innerHTML = parts.join("");
 }
 
@@ -484,6 +604,116 @@ async function sendPos(noHeading) {
   b.setUint8(13, phoneBatt);
   b.setUint8(14, 0x01 | (alertOn ? 0x02 : 0));
   try { await posChr.writeValueWithoutResponse(b.buffer); } catch (e) { console.warn("pos write", e); }
+}
+
+// ---------------------------------------------------------------- waypoint
+
+const POINTS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+
+function setWaypoint(w) {
+  const moved = w.lat !== wpt.lat || w.lon !== wpt.lon;
+  if (w.active && (moved || !wpt.active) && w.origin !== selfSlot()) toast("📍 " + whoSet(w) + " dropped a waypoint: " + (w.label || "pin"));
+  wpt = w;
+  render();
+}
+
+function whoSet(w) {
+  return w.origin === selfSlot() ? "You" : (units.get(w.origin)?.name || "Car " + (w.origin + 1));
+}
+
+function wptDirection() {
+  if (!me || !wpt.active) return null;
+  const d = distM(me, wpt), b = bearing(me, wpt);
+  const compass = POINTS[Math.round(b / 45) % 8] + " " + Math.round(b) + "°";
+  const clock = me.speed > 1.5 ? clockDir(b, me.heading) : null;
+  return { d, b, compass, clock };
+}
+
+function renderWaypoint() {
+  const bar = $("wptBar");
+  if (!wpt.active) {
+    for (const k of ["pin", "line", "label"]) { wptLayer[k]?.remove(); wptLayer[k] = null; }
+    bar.style.display = "none";
+    return;
+  }
+  const html = `<div class="wpin"><div class="p"></div><div class="lbl">${esc(wpt.label || "Waypoint")}</div></div>`;
+  const pinIcon = () => L.divIcon({ className: "", html, iconSize: [30, 40], iconAnchor: [15, 34] });
+  if (!wptLayer.pin) {
+    wptLayer.pin = L.marker([wpt.lat, wpt.lon], { zIndexOffset: 500, icon: pinIcon() }).addTo(map);
+    wptLayer.html = html;
+  } else {
+    wptLayer.pin.setLatLng([wpt.lat, wpt.lon]);
+    if (wptLayer.html !== html) { wptLayer.pin.setIcon(pinIcon()); wptLayer.html = html; }
+  }
+
+  const dir = wptDirection();
+  if (dir) {
+    // Dotted line from you to the pin, with distance and direction half way along.
+    const pts = [[me.lat, me.lon], [wpt.lat, wpt.lon]];
+    if (!wptLayer.line) wptLayer.line = L.polyline(pts, { color: "#d32f2f", weight: 5, opacity: .9, dashArray: "1 11", lineCap: "round", interactive: false }).addTo(map);
+    else wptLayer.line.setLatLngs(pts);
+    // Label sits 60% of the way to the pin; hidden when the two are too close on screen to fit it.
+    const a = map.latLngToContainerPoint([me.lat, me.lon]), z = map.latLngToContainerPoint([wpt.lat, wpt.lon]);
+    const roomy = a.distanceTo(z) > 170;
+    const mid = [me.lat + (wpt.lat - me.lat) * .6, me.lon + (wpt.lon - me.lon) * .6];
+    const lbl = roomy && `<div class="wlbl">${fmtDist(dir.d)} · ${dir.compass}${dir.clock ? " · " + dir.clock : ""}</div>`;
+    const lblIcon = () => L.divIcon({ className: "", html: lbl, iconSize: [0, 0] });
+    if (!lbl) {
+      wptLayer.label?.remove(); wptLayer.label = null;
+    } else if (!wptLayer.label) {
+      wptLayer.label = L.marker(mid, { interactive: false, zIndexOffset: -1000, icon: lblIcon() }).addTo(map);
+      wptLayer.lblHtml = lbl;
+    } else {
+      wptLayer.label.setLatLng(mid);
+      if (wptLayer.lblHtml !== lbl) { wptLayer.label.setIcon(lblIcon()); wptLayer.lblHtml = lbl; }
+    }
+  } else {
+    wptLayer.line?.remove(); wptLayer.line = null;
+    wptLayer.label?.remove(); wptLayer.label = null;
+  }
+
+  bar.style.display = "flex";
+  bar.querySelector("b").textContent = wpt.label || "Waypoint";
+  bar.querySelector(".t div").textContent = "Set by " + whoSet(wpt) + (dir ? " · " + dir.compass + (dir.clock ? " · " + dir.clock : "") : "");
+  bar.querySelector(".d").textContent = dir ? fmtDist(dir.d) : "";
+}
+
+function setPlacing(on) {
+  placing = on;
+  document.body.classList.toggle("placing", on);
+  $("btnWpt").className = on ? "alert-on" : "";
+  $("btnWpt").textContent = on ? "Cancel pin" : "📍 Pin";
+}
+
+function openWaypoint(latlng) {
+  setPlacing(false);
+  wptDraft = latlng ? { lat: latlng.lat, lon: latlng.lng } : null;
+  $("wptLabel").value = wptDraft ? "" : (wpt.label || "");
+  $("wptWhere").textContent = wptDraft
+    ? `New pin at ${wptDraft.lat.toFixed(5)}, ${wptDraft.lon.toFixed(5)}` + (me ? " · " + fmtDist(distM(me, wptDraft)) + " from you" : "")
+    : "Rename the current waypoint, or clear it for everyone.";
+  $("btnWptSend").textContent = wptDraft ? "Send to convoy" : "Rename";
+  $("btnWptClear").style.display = wpt.active ? "" : "none";
+  $("btnWptShow").style.display = !wptDraft && wpt.active ? "" : "none";
+  $("dlgWpt").showModal();
+}
+
+async function sendWaypoint(active, lat, lon, label) {
+  label = label.replace(/[^\x20-\x7e]/g, "").trim().slice(0, 18);
+  if (demo) {
+    setWaypoint({ known: true, active, origin: selfSlot(), version: (wpt.version || 0) + 1, lat, lon, label });
+  } else {
+    if (!wptChr) { toast(dev ? "This unit's firmware has no waypoints – reflash it" : "Connect your unit first"); return; }
+    const b = new DataView(new ArrayBuffer(9 + label.length));
+    b.setUint8(0, active ? 0 : 1);
+    b.setInt32(1, Math.round(lat * 1e7), true);
+    b.setInt32(5, Math.round(lon * 1e7), true);
+    for (let i = 0; i < label.length; i++) b.setUint8(9 + i, label.charCodeAt(i));
+    try { await wptChr.writeValueWithResponse(b.buffer); } catch (e) { toast("Send failed: " + e.message); return; }
+    // Show it straight away; the unit confirms with the convoy's version.
+    setWaypoint({ ...wpt, known: true, active, origin: selfSlot(), lat, lon, label });
+  }
+  toast(active ? "📍 Waypoint sent to convoy" : "Waypoint cleared for everyone");
 }
 
 // ---------------------------------------------------------------- messages
@@ -611,6 +841,7 @@ async function gattConnect() {
     posChr = await svc.getCharacteristic(POS);
     cfgChr = await svc.getCharacteristic(CFG);
     try { msgChr = await svc.getCharacteristic(MSG); } catch (e) { msgChr = null; }
+    try { wptChr = await svc.getCharacteristic(WPT); } catch (e) { wptChr = null; }
     const nodes = await svc.getCharacteristic(NODES);
     nodes.addEventListener("characteristicvaluechanged", (e) => { onRecord(e.target.value); });
     await nodes.startNotifications();
@@ -620,7 +851,7 @@ async function gattConnect() {
     toast("Connected to " + (dev.name || "unit"));
   } catch (e) {
     console.warn(e);
-    posChr = cfgChr = msgChr = null;
+    posChr = cfgChr = msgChr = wptChr = null;
     setTimeout(gattConnect, 2000);
   } finally {
     connecting = false;
@@ -629,7 +860,7 @@ async function gattConnect() {
 }
 
 function onDisconnected() {
-  posChr = cfgChr = msgChr = null;
+  posChr = cfgChr = msgChr = wptChr = null;
   toast("Unit disconnected – reconnecting…");
   render();
   setTimeout(gattConnect, 1000);
@@ -729,6 +960,12 @@ function startDemo() {
   let k = 0;
   demoTimers.push(setInterval(() => { const [slot, t] = demoMsgs[k++ % demoMsgs.length]; receiveMessage(slot, t); }, 30000));
   demoTimers.push(setTimeout(() => receiveMessage(2, "Fuel stop at next services"), 8000));
+  demoTimers.push(setTimeout(() => {
+    const ang = (s + 2500) / R;   // ~1.5 miles ahead of you on the loop
+    setWaypoint({ known: true, active: true, origin: 1, version: 1, label: "Services",
+                  lat: centre.lat + (R * Math.cos(ang)) / 111320,
+                  lon: centre.lon + (R * Math.sin(ang)) / (111320 * Math.cos(centre.lat * Math.PI / 180)) });
+  }, 3000));
 }
 
 function stopDemo() {
@@ -752,6 +989,22 @@ $("btnView").onclick = () => setFollow(!follow);
 $("btnAlert").onclick = () => { alertOn = !alertOn; renderAlertBtn(); lastSent = 0; sendPos(false); render(); };
 $("btnSettings").onclick = openSettings;
 $("btnMsg").onclick = openMessages;
+$("btnWpt").onclick = () => {
+  if (placing) setPlacing(false);
+  else { setPlacing(true); if (follow) setFollow(false); }
+};
+map.on("click", (e) => { if (placing) openWaypoint(e.latlng); });
+map.on("contextmenu", (e) => openWaypoint(e.latlng));   // long-press anywhere also drops a pin
+$("wptBar").onclick = () => { if (wpt.active) openWaypoint(null); };
+$("btnWptShow").onclick = () => { $("dlgWpt").close(); setFollow(false); map.setView([wpt.lat, wpt.lon], Math.max(map.getZoom(), 14)); };
+$("btnWptCancel").onclick = () => $("dlgWpt").close();
+$("btnWptSend").onclick = () => {
+  $("dlgWpt").close();
+  const label = $("wptLabel").value || (wptDraft ? "Meet here" : wpt.label);
+  if (wptDraft) sendWaypoint(true, wptDraft.lat, wptDraft.lon, label);
+  else if (wpt.active) sendWaypoint(true, wpt.lat, wpt.lon, label);
+};
+$("btnWptClear").onclick = () => { $("dlgWpt").close(); sendWaypoint(false, wpt.lat || 0, wpt.lon || 0, ""); };
 $("btnMsgClose").onclick = () => $("dlgMsg").close();
 $("btnEditQuick").onclick = () => { editingQuick = !editingQuick; renderQuick(); };
 $("btnSaveQuick").onclick = () => {
